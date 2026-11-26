@@ -1,0 +1,61 @@
+name: Daily lotto update
+
+on:
+  schedule:
+    # 20:00 Europe/Vienna = 19:00 UTC in winter (CET) and 18:00 UTC in summer (CEST).
+    # Both are scheduled; the guard step below only proceeds when it is 20:xx in Vienna.
+    - cron: "0 18 * * *"
+    - cron: "0 19 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: lotto-update
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check Vienna time
+        id: guard
+        run: |
+          HOUR=$(TZ=Europe/Vienna date +%H)
+          echo "Vienna hour: $HOUR"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] || [ "$HOUR" = "20" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.guard.outputs.run == 'true'
+
+      - uses: actions/setup-python@v5
+        if: steps.guard.outputs.run == 'true'
+        with:
+          python-version: "3.10"
+          cache: pip
+
+      - name: Install requirements
+        if: steps.guard.outputs.run == 'true'
+        run: pip install -r requirements.txt
+
+      - name: Run scheduler
+        if: steps.guard.outputs.run == 'true'
+        run: python src/scheduler.py --check-new
+
+      - name: Commit changes
+        if: steps.guard.outputs.run == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
+          git add strategy.md experiments.md data/lotto.db
+          if git diff --cached --quiet; then
+            echo "No changes"
+          else
+            git commit -m "Automated update: $(TZ=Europe/Vienna date +'%Y-%m-%d %H:%M %Z')"
+            git push
+          fi
