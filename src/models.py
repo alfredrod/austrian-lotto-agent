@@ -83,13 +83,33 @@ class BaseModel(ABC):
             raise RuntimeError(f"{self.name} must be fitted before predicting")
         return inclusion_from_weights(self._weights)
 
-    def suggest_numbers(self, rng: Optional[np.random.Generator] = None) -> list[int]:
-        """Sample 6 distinct numbers sequentially without replacement, proportional to model weights."""
+    def suggest_combinations(self, n: int = 1,
+                             rng: Optional[np.random.Generator] = None) -> list[list[int]]:
+        """Sample up to `n` distinct 6-number combinations, proportional to model weights.
+
+        Duplicates are rejected; practically C(45,6)=8,145,060 so the budget loop always finishes.
+        """
         if self._weights is None:
             raise RuntimeError(f"{self.name} must be fitted before suggesting")
+        if n < 1:
+            raise ValueError("n must be >= 1")
         rng = rng or np.random.default_rng()
-        picks = rng.choice(np.arange(1, N_NUMBERS + 1), size=K_PICK, replace=False, p=self._weights)
-        return sorted(int(x) for x in picks)
+        seen: set[tuple[int, ...]] = set()
+        out: list[list[int]] = []
+        for _ in range(n * 50):
+            if len(out) >= n:
+                break
+            picks = rng.choice(np.arange(1, N_NUMBERS + 1), size=K_PICK, replace=False, p=self._weights)
+            key = tuple(sorted(int(x) for x in picks))
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(list(key))
+        return out
+
+    def suggest_numbers(self, rng: Optional[np.random.Generator] = None) -> list[int]:
+        """Sample one 6-number combination (backward-compatible wrapper)."""
+        return self.suggest_combinations(1, rng)[0]
 
 
 class UniformRandomBaseline(BaseModel):
@@ -100,13 +120,25 @@ class UniformRandomBaseline(BaseModel):
     def _fit_weights(self, X: np.ndarray) -> np.ndarray:
         return np.full(N_NUMBERS, 1.0 / N_NUMBERS)
 
-    def suggest_numbers(self, rng: Optional[np.random.Generator] = None) -> list[int]:
-        """Truly random 6 of 45 (SystemRandom) unless a seeded rng is given for reproducibility."""
+    def suggest_combinations(self, n: int = 1,
+                             rng: Optional[np.random.Generator] = None) -> list[list[int]]:
+        """Truly random combinations using SystemRandom (or seeded rng for tests)."""
         if self._weights is None:
             self.fit([])
         if rng is not None:
-            return super().suggest_numbers(rng)
-        return sorted(random.SystemRandom().sample(range(1, N_NUMBERS + 1), K_PICK))
+            return super().suggest_combinations(n, rng)
+        if n < 1:
+            raise ValueError("n must be >= 1")
+        sr = random.SystemRandom()
+        seen: set[tuple[int, ...]] = set()
+        out: list[list[int]] = []
+        while len(out) < n:
+            key = tuple(sorted(sr.sample(range(1, N_NUMBERS + 1), K_PICK)))
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(list(key))
+        return out
 
 
 class BayesianFrequencyModel(BaseModel):

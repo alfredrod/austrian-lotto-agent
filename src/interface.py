@@ -57,9 +57,10 @@ def cmd_suggest(conn, args) -> int:
     draws = db.get_draws(conn)
     name, reason = (args.model, "selected by user") if args.model else choose_model(conn)
     model = get_model(name).fit(draws)
-    nums = model.suggest_numbers()
-    print(f"Suggestion: {' '.join(f'{n:2d}' for n in nums)}")
-    print(f"Model: {name} ({reason}); trained on {len(draws)} draws")
+    combos = model.suggest_combinations(args.combinations)
+    for i, nums in enumerate(combos, 1):
+        print(f"{i:>2}. {' '.join(f'{n:2d}' for n in nums)}")
+    print(f"Model: {name} ({reason}); trained on {len(draws)} draws; {len(combos)} combinations")
     return 0
 
 
@@ -101,6 +102,7 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("status", help="latest draw and data update status")
     s = sub.add_parser("suggest", help="generate a 6-number suggestion")
     s.add_argument("--model", choices=sorted(MODEL_REGISTRY))
+    s.add_argument("--combinations", type=int, default=1, help="how many lines to generate (default 1)")
     b = sub.add_parser("backtest", help="show (or run) backtest results vs random baseline")
     b.add_argument("--run", action="store_true")
     b.add_argument("--holdout", action="store_true")

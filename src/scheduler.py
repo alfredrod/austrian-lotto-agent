@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import fcntl
 import logging
+import os
 import re
 import sys
 import time
@@ -35,6 +36,7 @@ STALE_AFTER_DAYS = 2
 REPO_ROOT = Path(__file__).resolve().parent.parent
 STRATEGY_MD = REPO_ROOT / "strategy.md"
 LOCK_PATH = REPO_ROOT / "data" / ".scheduler.lock"
+COMBINATIONS_PER_MODEL: int = int(os.environ.get("LOTTO_COMBINATIONS_PER_MODEL", "10"))
 T = TypeVar("T")
 
 
@@ -89,6 +91,10 @@ def score_pending_forecasts(conn) -> int:
         y[np.array(draw.numbers) - 1] = 1
         db.score_forecast(conn, f["id"], len(nums & set(draw.numbers)), draw.additional_number in nums,
                           float(((probs - y) ** 2).mean()))
+        for c in db.get_forecast_combinations(conn, f["id"]):
+            cnums = set(json.loads(c["numbers"]))
+            db.score_forecast_combination(conn, c["id"], len(cnums & set(draw.numbers)),
+                                          draw.additional_number in cnums)
         scored += 1
         logger.info("Scored forecast %d (%s, %s): %d matches", f["id"], f["model_name"], draw.draw_date,
                     len(nums & set(draw.numbers)))
@@ -108,8 +114,9 @@ def make_forecasts(conn, target: date) -> int:
             model.fit(draws)
             probs = model.predict_probabilities()
             mv = db.insert_model_version(conn, model.name, model.params, len(draws), draws[-1].draw_date, probs)
-            if db.insert_forecast(conn, target, model.name, model.suggest_numbers(rng), probs,
-                                  draws[-1].draw_date, mv) is not None:
+            combos = model.suggest_combinations(COMBINATIONS_PER_MODEL, rng)
+            if db.insert_forecast(conn, target, model.name, combos[0], probs,
+                                  draws[-1].draw_date, mv, combinations=combos) is not None:
                 created += 1
         except Exception:
             logger.exception("Forecast failed for model %s", model.name)
