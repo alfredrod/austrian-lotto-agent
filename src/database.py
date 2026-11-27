@@ -105,6 +105,29 @@ MIGRATIONS: list[str] = [
     );
     CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
     """,
+    # v2: multiple combinations per forecast
+    """
+    ALTER TABLE forecasts ADD COLUMN n_combinations INTEGER NOT NULL DEFAULT 1;
+    CREATE TABLE IF NOT EXISTS forecast_combinations (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        forecast_id INTEGER NOT NULL REFERENCES forecasts(id),
+        combo_index INTEGER NOT NULL,
+        numbers TEXT NOT NULL,
+        matched_count INTEGER,
+        additional_matched INTEGER,
+        UNIQUE(forecast_id, combo_index)
+    );
+    CREATE TRIGGER IF NOT EXISTS forecast_combinations_immutable
+    BEFORE UPDATE OF forecast_id, combo_index, numbers ON forecast_combinations
+    BEGIN SELECT RAISE(ABORT, 'forecast combinations are immutable'); END;
+    CREATE TRIGGER IF NOT EXISTS forecast_combinations_score_once
+    BEFORE UPDATE OF matched_count, additional_matched ON forecast_combinations
+    WHEN OLD.matched_count IS NOT NULL
+    BEGIN SELECT RAISE(ABORT, 'combination already scored'); END;
+    CREATE TRIGGER IF NOT EXISTS forecast_combinations_no_delete
+    BEFORE DELETE ON forecast_combinations
+    BEGIN SELECT RAISE(ABORT, 'forecast combinations cannot be deleted'); END;
+    """,
 ]
 
 
@@ -230,19 +253,27 @@ def insert_model_version(conn: sqlite3.Connection, model_name: str, params: dict
 
 def insert_forecast(conn: sqlite3.Connection, target_draw_date: date, model_name: str, numbers: Sequence[int],
                     probabilities: Sequence[float], data_cutoff_date: Optional[date],
-                    model_version_id: Optional[int] = None) -> Optional[int]:
-    """Save an immutable forecast. Returns None if one already exists for (target date, model)."""
+                    model_version_id: Optional[int] = None,
+                    combinations: Optional[Sequence[Sequence[int]]] = None) -> Optional[int]:
+    """Save an immutable forecast with all its combinations. Returns None if one already exists."""
     try:
+        combos = [sorted(int(n) for n in c) for c in (combinations or [numbers])]
         cur = conn.execute(
             "INSERT INTO forecasts (created_at,target_draw_date,model_name,model_version_id,numbers,probabilities,"
-            "data_cutoff_date) VALUES (?,?,?,?,?,?,?)",
+            "data_cutoff_date,n_combinations) VALUES (?,?,?,?,?,?,?,?)",
             (utcnow(), target_draw_date.isoformat(), model_name, model_version_id,
              json.dumps(sorted(int(n) for n in numbers)), json.dumps([round(float(p), 6) for p in probabilities]),
-             data_cutoff_date.isoformat() if data_cutoff_date else None),
+             data_cutoff_date.isoformat() if data_cutoff_date else None, len(combos)),
+        )
+        fid = int(cur.lastrowid)
+        conn.executemany(
+            "INSERT INTO forecast_combinations (forecast_id,combo_index,numbers) VALUES (?,?,?)",
+            [(fid, i, json.dumps(c)) for i, c in enumerate(combos)],
         )
         conn.commit()
-        return int(cur.lastrowid)
+        return fid
     except sqlite3.IntegrityError:
+        conn.rollback()
         logger.info("Forecast for %s by %s already exists; not overwriting", target_draw_date, model_name)
         return None
 
@@ -257,6 +288,26 @@ def score_forecast(conn: sqlite3.Connection, forecast_id: int, matched: int, add
     """Attach the outcome to a forecast (allowed exactly once)."""
     conn.execute("UPDATE forecasts SET scored_at=?, matched_count=?, additional_matched=?, brier_score=? WHERE id=?",
                  (utcnow(), matched, int(additional_matched), brier, forecast_id))
+    conn.commit()
+
+
+def get_forecast_combinations(conn: sqlite3.Connection,
+                              forecast_id: Optional[int] = None) -> list[sqlite3.Row]:
+    """Return combinations of one forecast, or all forecasts when forecast_id is None."""
+    q, params = "SELECT * FROM forecast_combinations", ()
+    if forecast_id is not None:
+        q += " WHERE forecast_id = ?"
+        params = (forecast_id,)
+    return conn.execute(q + " ORDER BY forecast_id, combo_index", params).fetchall()
+
+
+def score_forecast_combination(conn: sqlite3.Connection, combo_id: int, matched: int,
+                               additional_matched: bool) -> None:
+    """Attach draw outcome to a single combination row (allowed exactly once)."""
+    conn.execute(
+        "UPDATE forecast_combinations SET matched_count=?, additional_matched=? WHERE id=?",
+        (matched, int(additional_matched), combo_id),
+    )
     conn.commit()
 
 
