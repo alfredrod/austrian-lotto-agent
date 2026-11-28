@@ -10,8 +10,8 @@
 
 ## Current data state
 <!-- DATA_STATE_START -->
-- Draws stored: 3707
-- Latest draw: 2026-11-25 [13, 27, 30, 31, 32, 43] + Zz 42
+- Draws stored: 3708
+- Latest draw: 2026-11-27 [12, 14, 19, 23, 31, 34] + Zz 1
 - Holdout start date (frozen): 2020-08-09
 - Live forecasts scored: 0
 <!-- DATA_STATE_END -->
