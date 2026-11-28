@@ -8,6 +8,7 @@ import pytest
 
 import backfill
 import database as db
+import scheduler
 
 
 def _make_draws(n: int = 120, start: date = date(2024, 1, 3)) -> list:
@@ -108,3 +109,37 @@ def test_forecast_numbers_still_immutable(conn):
         conn.execute("UPDATE forecasts SET numbers = ? WHERE id = ?",
                      (json.dumps([7, 8, 9, 10, 11, 12]), fid))
     conn.rollback()
+
+
+def test_scheduler_backfills_upcoming_targets_only(conn):
+    past = _legacy_forecast(conn, date(2024, 6, 5), cutoff=date(2024, 5, 29))
+    upcoming = _legacy_forecast(conn, date(2024, 6, 12), model_name="bayesian_frequency",
+                                cutoff=date(2024, 6, 5))
+
+    report = scheduler.backfill_pending_combinations(conn, today=date(2024, 6, 10))
+
+    assert report["targets"] == ["2024-06-12"]
+    assert report["rows_inserted"] == 10
+    assert len(db.get_forecast_combinations(conn, upcoming)) == 10
+    assert db.get_forecast_combinations(conn, past) == []
+    assert conn.execute("SELECT n_combinations FROM forecasts WHERE id = ?", (past,)).fetchone()[0] == 1
+
+
+def test_scheduler_backfill_is_idempotent(conn):
+    fid = _legacy_forecast(conn, date(2024, 6, 12), cutoff=date(2024, 6, 5))
+
+    first = scheduler.backfill_pending_combinations(conn, today=date(2024, 6, 10))
+    before = [r["numbers"] for r in db.get_forecast_combinations(conn, fid)]
+    second = scheduler.backfill_pending_combinations(conn, today=date(2024, 6, 10))
+
+    assert first["rows_inserted"] == 10
+    assert second["rows_inserted"] == 0
+    assert [r["numbers"] for r in db.get_forecast_combinations(conn, fid)] == before
+
+
+def test_scheduler_backfill_noop_without_upcoming_targets(conn):
+    _legacy_forecast(conn, date(2024, 6, 5), cutoff=date(2024, 5, 29))
+
+    report = scheduler.backfill_pending_combinations(conn, today=date(2024, 6, 10))
+
+    assert report == {"targets": [], "forecasts_processed": 0, "rows_inserted": 0}

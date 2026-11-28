@@ -16,7 +16,7 @@ walk-forward backtests against a uniform random baseline, and keeps immutable li
 | `src/database.py` | SQLite schema/migrations (`draws`, `forecasts`, `model_versions`, `backtest_results`, `update_log`, `meta`) and CRUD helpers |
 | `src/models.py` | `UniformRandomBaseline`, `BayesianFrequencyModel` (Dirichlet shrinkage), `RecencyWeightedModel` (exponential decay), `RegularizedHistoricalModel` (ridge) |
 | `src/backtester.py` | Walk-forward evaluation, Brier/log-loss/calibration/matches, bootstrap CIs, frozen 20% holdout |
-| `src/scheduler.py` | Update cycle (Europe/Vienna): fetch new draws, score forecasts, refit, forecast next draw |
+| `src/scheduler.py` | Update cycle (Europe/Vienna): fetch new draws, score forecasts, refit, forecast next draw, top up under-filled forecasts |
 | `src/interface.py` | CLI |
 | `src/backfill.py` | Adds the missing combinations to forecasts saved before the multi-line feature (INSERT-only, so the immutability triggers stay intact) |
 | `strategy.md` / `experiments.md` | Current strategy & evidence / dated experiment log |
@@ -46,9 +46,15 @@ python src/interface.py experiments            # show experiments.md
 python src/interface.py update                 # fetch new draws, score & refresh forecasts
 python src/interface.py backfill --dry-run     # preview the combinations old forecasts are missing
 python src/interface.py backfill               # add them (idempotent, INSERT-only)
+python src/interface.py backfill --target 2026-11-29   # only one target draw
 ```
 Scheduler: `python src/scheduler.py --check-new` (one cycle, cron-friendly) or `--daemon --interval 60`.
 Example cron (server in Vienna time): `15 20 * * 0,3 cd /path/to/repo && .venv/bin/python src/scheduler.py --check-new`.
+
+Every cycle ends with the same INSERT-only repair the `backfill` command performs, applied to forecasts whose
+target draw has not happened yet, so a legacy one-line forecast is topped up to 10 lines before it is played.
+Draws that are already in the past are left untouched, because combinations added afterwards would never be
+scored. Skip the step with `--no-backfill` or `LOTTO_BACKFILL=0`.
 
 A GitHub Actions workflow (`deploy/github-workflows/update.yml`, see "GitHub Actions" below) runs the cycle daily at 20:00 Vienna time and commits
 the updated database and markdown files.
