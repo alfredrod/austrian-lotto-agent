@@ -5,6 +5,7 @@ import argparse
 import json
 import logging
 import sys
+from datetime import date
 from pathlib import Path
 from typing import Optional
 
@@ -92,6 +93,14 @@ def cmd_update(conn, args) -> int:
     return 0
 
 
+def cmd_backfill(conn, args) -> int:
+    from backfill import backfill_combinations
+    report = backfill_combinations(conn, target=args.target, dry_run=args.dry_run,
+                                   seed=args.seed, count=args.count)
+    print(json.dumps(report, indent=2, default=str))
+    return 0 if report.get("status") == "ok" else 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Argument parser with all sub-commands."""
     ap = argparse.ArgumentParser(prog="lotto-agent", description=__doc__, epilog=DISCLAIMER)
@@ -112,6 +121,12 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("experiments", help="show experiments.md")
     u = sub.add_parser("update", help="manual data update and model refresh")
     u.add_argument("--full", action="store_true", help="download the complete history")
+    f = sub.add_parser("backfill", help="add missing combinations to already-saved forecasts")
+    f.add_argument("--target", type=date.fromisoformat, default=None,
+                   help="only this target draw (YYYY-MM-DD)")
+    f.add_argument("--count", type=int, default=None, help="combinations per model (default 10)")
+    f.add_argument("--dry-run", action="store_true", help="report without writing anything")
+    f.add_argument("--seed", type=int, default=None, help="seed for reproducible sampling")
     return ap
 
 
@@ -131,7 +146,7 @@ def main(argv: Optional[list[str]] = None) -> int:
             print(f"Database ready at {args.db or db.DEFAULT_DB_PATH}")
             return 0
         return {"status": cmd_status, "suggest": cmd_suggest, "backtest": cmd_backtest,
-                "update": cmd_update}[args.command](conn, args)
+                "update": cmd_update, "backfill": cmd_backfill}[args.command](conn, args)
     except Exception as exc:
         logging.getLogger(__name__).debug("error", exc_info=True)
         print(f"Error: {exc}", file=sys.stderr)

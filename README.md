@@ -18,6 +18,7 @@ walk-forward backtests against a uniform random baseline, and keeps immutable li
 | `src/backtester.py` | Walk-forward evaluation, Brier/log-loss/calibration/matches, bootstrap CIs, frozen 20% holdout |
 | `src/scheduler.py` | Update cycle (Europe/Vienna): fetch new draws, score forecasts, refit, forecast next draw |
 | `src/interface.py` | CLI |
+| `src/backfill.py` | Adds the missing combinations to forecasts saved before the multi-line feature (INSERT-only, so the immutability triggers stay intact) |
 | `strategy.md` / `experiments.md` | Current strategy & evidence / dated experiment log |
 
 ## Setup
@@ -36,12 +37,15 @@ The repository already ships a populated `data/lotto.db`; `update` only adds new
 python src/interface.py status                 # latest draw, last update, pending forecasts
 python src/interface.py suggest                # 6 numbers + which model produced them
 python src/interface.py suggest --model bayesian_frequency
+python src/interface.py suggest --combinations 10
 python src/interface.py backtest               # latest results vs uniform baseline with 95% CIs
 python src/interface.py backtest --run         # re-run development backtest (logs to experiments.md)
 python src/interface.py backtest --run --holdout   # evaluate frozen holdout (use sparingly)
 python src/interface.py strategy               # show strategy.md
 python src/interface.py experiments            # show experiments.md
 python src/interface.py update                 # fetch new draws, score & refresh forecasts
+python src/interface.py backfill --dry-run     # preview the combinations old forecasts are missing
+python src/interface.py backfill               # add them (idempotent, INSERT-only)
 ```
 Scheduler: `python src/scheduler.py --check-new` (one cycle, cron-friendly) or `--daemon --interval 60`.
 Example cron (server in Vienna time): `15 20 * * 0,3 cd /path/to/repo && .venv/bin/python src/scheduler.py --check-new`.
