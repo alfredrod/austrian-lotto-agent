@@ -22,7 +22,7 @@ lotto-agent = "interface:main"
 
 [tool.setuptools]
 package-dir = { "" = "src" }
-py-modules = ["backtester", "data_collector", "database", "interface", "models", "scheduler"]
+py-modules = ["backfill", "backtester", "data_collector", "database", "interface", "models", "scheduler"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
